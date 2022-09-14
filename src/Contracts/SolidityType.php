@@ -2,30 +2,30 @@
 
 /**
  * This file is part of web3.php package.
- * 
+ *
  * (c) Kuan-Cheng,Lai <alk03073135@gmail.com>
- * 
+ *
  * @author Peter Lai <alk03073135@gmail.com>
  * @license MIT
  */
 
 namespace Web3\Contracts;
 
-use Web3\Utils;
 use Web3\Formatters\IntegerFormatter;
+use Web3\Utils;
 
 class SolidityType
 {
     /**
      * construct
-     * 
+     *
      * @return void
      */
     // public function  __construct() {}
 
     /**
      * get
-     * 
+     *
      * @param string $name
      * @return mixed
      */
@@ -41,7 +41,7 @@ class SolidityType
 
     /**
      * set
-     * 
+     *
      * @param string $name
      * @param mixed $value
      * @return mixed;
@@ -58,7 +58,7 @@ class SolidityType
 
     /**
      * callStatic
-     * 
+     *
      * @param string $name
      * @param array $arguments
      * @return void
@@ -67,7 +67,7 @@ class SolidityType
 
     /**
      * nestedTypes
-     * 
+     *
      * @param string $name
      * @return mixed
      */
@@ -86,12 +86,13 @@ class SolidityType
 
     /**
      * nestedName
-     * 
+     *
      * @param string $name
      * @return string
      */
     public function nestedName($name)
     {
+
         if (!is_string($name)) {
             throw new InvalidArgumentException('nestedName name must string.');
         }
@@ -105,7 +106,7 @@ class SolidityType
 
     /**
      * isDynamicArray
-     * 
+     *
      * @param string $name
      * @return bool
      */
@@ -118,7 +119,7 @@ class SolidityType
 
     /**
      * isStaticArray
-     * 
+     *
      * @param string $name
      * @return bool
      */
@@ -131,7 +132,7 @@ class SolidityType
 
     /**
      * staticArrayLength
-     * 
+     *
      * @param string $name
      * @return int
      */
@@ -145,14 +146,14 @@ class SolidityType
         $match = [];
 
         if (preg_match('/[0-9]{1,}/', $nestedTypes[count($nestedTypes) - 1], $match) === 1) {
-            return (int) $match[0];
+            return (int)$match[0];
         }
         return 1;
     }
 
     /**
      * staticPartLength
-     * 
+     *
      * @param string $name
      * @return int
      */
@@ -181,7 +182,7 @@ class SolidityType
 
     /**
      * isDynamicType
-     * 
+     *
      * @return bool
      */
     public function isDynamicType()
@@ -191,7 +192,7 @@ class SolidityType
 
     /**
      * encode
-     * 
+     *
      * @param mixed $value
      * @param string $name
      * @return string
@@ -203,6 +204,21 @@ class SolidityType
             $nestedName = $this->nestedName($name);
             $result = [];
             $result[] = IntegerFormatter::format($length);
+            //解决 encode
+
+            if ($this->isDynamicType($nestedName)) {
+                $start = 0;
+                foreach ($value as $k => $val) {
+                    if ($start == 0) {
+                        $l = $length * 32;
+                    } else {
+                        $v_1 = Utils::toHex($value[$k - 1]);
+                        $l = (floor((mb_strlen($v_1) + 63) / 64) + 1) * 32;
+                    }
+                    $start += $l;
+                    $result[] = IntegerFormatter::format($start);
+                }
+            }
 
             foreach ($value as $val) {
                 $result[] = $this->encode($val, $nestedName);
@@ -223,7 +239,7 @@ class SolidityType
 
     /**
      * decode
-     * 
+     *
      * @param mixed $value
      * @param string $offset
      * @param string $name
@@ -232,18 +248,43 @@ class SolidityType
     public function decode($value, $offset, $name)
     {
         if ($this->isDynamicArray($name)) {
-            $arrayOffset = (int) Utils::toBn('0x' . mb_substr($value, $offset * 2, 64))->toString();
-            $length = (int) Utils::toBn('0x' . mb_substr($value, $arrayOffset * 2, 64))->toString();
+            $arrayOffset = (int)Utils::toBn('0x' . mb_substr($value, $offset * 2, 64))->toString();    //32
+            $length = (int)Utils::toBn('0x' . mb_substr($value, $arrayOffset * 2, 64))->toString();  //数组的个数
             $arrayStart = $arrayOffset + 32;
 
             $nestedName = $this->nestedName($name);
-            $nestedStaticPartLength = $this->staticPartLength($nestedName);
-            $roundedNestedStaticPartLength = floor(($nestedStaticPartLength + 31) / 32) * 32;
             $result = [];
+            if ($nestedName == 'bytes' || $nestedName == 'string') {
+                $mA = $arrayStart * 2;
+                $mAA = ($mA + (64 * 1));
+                for ($i = 0; $i < $length; $i++) {
+                    $mAA = ($mA + (64 * $i)); //目前的定位
 
-            for ($i=0; $i<$length * $roundedNestedStaticPartLength; $i+=$roundedNestedStaticPartLength) {
-                $result[] = $this->decode($value, $arrayStart + $i, $nestedName);
+                    $mB = (int)Utils::toBn('0x' . mb_substr($value, ($mA + (64 * $i)), 64))->toString();
+
+
+                    $mBB = $mA + ($mB * 2);
+                    #clear $mBB.PHP_EOL;
+                    $mC = (int)Utils::toBn('0x' . mb_substr($value, $mBB, 64))->toString();
+                    $mCC = (floor($mC / 32) + 1) * 64;
+                    $mD = mb_substr($value, ($mBB + 64), $mCC);
+                    #echo  $mD.PHP_EOL;
+                    #echo mb_substr($value, $mBB, 64).PHP_EOL;
+
+                    #echo "mb ={$mB} mBB={$mBB} mc={$mC} mcc={$mCC}".PHP_EOL;
+                    $result[] = $this->decode($value, $mBB, $nestedName);
+                }
+
+            } else {
+                $nestedStaticPartLength = $this->staticPartLength($nestedName);
+                $roundedNestedStaticPartLength = floor(($nestedStaticPartLength + 31) / 32) * 32;
+                $result = [];
+
+                for ($i = 0; $i < $length * $roundedNestedStaticPartLength; $i += $roundedNestedStaticPartLength) {
+                    $result[] = $this->decode($value, $arrayStart + $i, $nestedName);
+                }
             }
+
             return $result;
         } elseif ($this->isStaticArray($name)) {
             $length = $this->staticArrayLength($name);
@@ -254,15 +295,22 @@ class SolidityType
             $roundedNestedStaticPartLength = floor(($nestedStaticPartLength + 31) / 32) * 32;
             $result = [];
 
-            for ($i=0; $i<$length * $roundedNestedStaticPartLength; $i+=$roundedNestedStaticPartLength) {
+            for ($i = 0; $i < $length * $roundedNestedStaticPartLength; $i += $roundedNestedStaticPartLength) {
                 $result[] = $this->decode($value, $arrayStart + $i, $nestedName);
             }
             return $result;
         } elseif ($this->isDynamicType()) {
-            $dynamicOffset = (int) Utils::toBn('0x' . mb_substr($value, $offset * 2, 64))->toString();
-            $length = (int) Utils::toBn('0x' . mb_substr($value, $dynamicOffset * 2, 64))->toString();
-            $roundedLength = floor(($length + 31) / 32);
-            $param = mb_substr($value, $dynamicOffset * 2, ( 1 + $roundedLength) * 64);
+
+            if ($name == 'bytes' || $name == 'string') {
+                $mC = (int)Utils::toBn('0x' . mb_substr($value, $offset, 64))->toString();
+                $mCC = (floor($mC / 32) + 1) * 64;
+                $param = mb_substr($value, ($offset), ($mCC + 64));
+            } else {
+                $dynamicOffset = (int)Utils::toBn('0x' . mb_substr($value, $offset * 2, 64))->toString();
+                $length = (int)Utils::toBn('0x' . mb_substr($value, $dynamicOffset * 2, 64))->toString();
+                $roundedLength = floor(($length + 31) / 32);
+                $param = mb_substr($value, $dynamicOffset * 2, (1 + $roundedLength) * 64);
+            }
             return $this->outputFormat($param, $name);
         }
         $length = $this->staticPartLength($name);
